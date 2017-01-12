@@ -11,7 +11,7 @@ int CompareAndSwap(uintptr_t* add, int old_val, int new_val);
 int CompareAndSwapWrapper(uintptr_t* add, int old_val, int new_val);
 void* MallocFromActive(procheap *heap);
 
-
+//Test functions for CAS
 int CompareAndSwapWrapper(uintptr_t* add, int old_val, int new_val){
 	int value;
 	pthread_mutex_lock(&mutex);
@@ -145,6 +145,17 @@ static void UpdateActive(procheap* heap, descriptor* desc, unsigned long morecre
 
 }
 
+
+
+static descriptor* ListGetPartial(sizeclass* sc){
+	
+}
+
+static void ListPutPartial(descriptor* desc){
+	 
+}
+
+
 static void HeapPutPartial(descriptor* desc){
 
 	descriptor* prev;
@@ -211,6 +222,44 @@ static void *MallocFromPartial(procheap *heap){
 	return addr+EIGHTBYTES;
 }
 
+static void *AllocNewSB(unsigned int size){
+
+	void* addr;
+	if((addr = mmap(NULL,size,PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0)) == MAP_FAILED){		
+		//null => kernel chooses address for new mapping 
+		printf("Memory error:Alloc Fail: %e",errno);
+		exit(1);
+	}
+	
+	return addr;
+}
+
+static void MakeDescList(void* sb, unsigned long maxcount, unsigned long sz){
+
+	unsigned int i;
+	unsigned int currptr,nxtptr;
+	currptr = (unsigned long)sb;
+	for(i=0;i<maxcount-1;i++){
+		currptr += i*sz;
+		nextptr += (i+1)*sz;
+		((descriptor *)currptr)->Next = (descriptor *)nextptr;
+	}
+	currptr = nextptr;
+	((descriptor *)currptr)->Next = NULL;
+}	
+
+static void MakeList(void* sb, unsigned long maxcount, unsigned long sz){
+
+	unsigned int i;
+	unsigned int currptr;
+	currptr = (unsigned long)sb;
+	for(i=0;i<maxcount-1;i++){
+		currptr += i*sz;
+		*((unsigned long *)currptr) = i+1;		//block number
+	}
+	
+}
+
 static void *MallocFromNewSB(procheap *heap){
 
 	descriptor* desc;
@@ -221,14 +270,16 @@ static void *MallocFromNewSB(procheap *heap){
 	desc = DescAlloc();
 	desc->sb = AllocNewSB(heap->sc->sbsize);
 	//Organize blocks in a linked list starting with index 0.
+	MakeList(desc->sb,desc->maxcount,desc->sz);
 	desc->heap = heap;
 	desc->Anchor.avail =1;
 	desc->sz=heap->sc->sz;
 	desc->maxcount = heap->sc->sbsize/desc->sz;
 	
-	*((unsigned long long*)&newactive) = 0;		//wipe out newactive to 0.
+	*((ull*)&newactive) = 0;		//wipe out newactive to 0.
 	newactive.ptr = (unsigned long)desc;
 	newactive.credits = MIN(desc->maxcount-1,MAXCREDITS)-1;
+	desc->Anchor.count = (desc->maxcount-1)-(newactive.credits+1);
 	desc->Anchor.state = ACTIVE;
 	
 	//memory fence.Volatile!
