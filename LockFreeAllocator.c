@@ -254,11 +254,11 @@ static void DescRetire(descriptor* desc){
 
 
 static descriptor* ListGetPartial(sizeclass* sc){
-	
+	return (descriptor *)Pop(sc->Partial);
 }
 
 static void ListPutPartial(descriptor* desc){
-	 
+	 Push(&desc->heap->sc->Partial, (void*)desc);
 }
 
 
