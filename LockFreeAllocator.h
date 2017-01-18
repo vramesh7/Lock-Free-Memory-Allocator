@@ -27,7 +27,7 @@
 #define PARTIAL		2 
 #define EMPTY 		3
 
-
+#define DESCSBSIZE	(1024 * sizeof(descriptor))
 void *malloc(unsigned int);
 void free(void *);
 
@@ -42,6 +42,9 @@ typedef struct{
 unsigned long long DescAvail;		//DescAvail:46 and tag:18	
 }DescAvail;
 */
+
+#define BLOCKSTAT(x)	x & 0x1
+#define BLOCKDESC(x)	x & ~0x1
 
 typedef unsigned long long ull;
 //64 bit machine.
@@ -62,6 +65,7 @@ typedef struct{
 typedef struct{
 	//each SB contains 
 	//LIst Partial
+	stack_t Partial;
 	unsigned int sz;		//blocksize
 	unsigned int sbsize;		//superblock size  => no of blocks sbszie/sz
 }sizeclass;
