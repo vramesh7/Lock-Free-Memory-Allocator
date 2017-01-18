@@ -1,4 +1,4 @@
-
+#include <stdlib.h>
 
 typedef struct {
 	volatile  unsigned long long head:48, tag:16;		//head is stack_elem. tag fixes aba problem 

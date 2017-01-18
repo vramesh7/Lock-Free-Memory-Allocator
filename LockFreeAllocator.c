@@ -3,7 +3,7 @@
 #include <assert.h>
 
 #include "LockFreeAllocator.h"
-
+#include "Stack.c"
 #define EIGHTBYTES	sizeof(char *)
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 static void UpdateActive(procheap* heap, descriptor* desc, unsigned long morecredits);
