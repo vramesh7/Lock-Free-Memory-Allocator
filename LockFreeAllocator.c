@@ -198,7 +198,7 @@ static descriptor* DescAlloc(){
 			new.DescAvail = (unsigned long)(((descriptor *)(old.DescAvail))->Next);
 			new.tag = old.tag + 1;		//update tag
 			//swing head of list to point to next desc. Allocates block on success
-			if(CompareAndSwapWrapper(*(volatile unsigned long *)&desc_head,*(unsigned long *)&old,*(unsigned long *)&new)){
+			if(__sync_val_compare_and_swap(*(volatile unsigned long *)&desc_head,*(unsigned long *)&old,*(unsigned long *)&new)){
 				desc = (descriptor *)old.DescAvail;				
 				break;
 			}
@@ -210,7 +210,7 @@ static descriptor* DescAlloc(){
 			MakeDescList((void *)desc, NDESC, sizeof(descriptor));
 			new.DescAvail = (unsigned long)(desc->Next);
 			new.tag = old.tag + 1;		//update tag
-			if(CompareAndSwapWrapper(*(volatile unsigned long *)&desc_head,*(unsigned long *)&old,*(unsigned long *)&new)){
+			if(__sync_val_compare_and_swap(*(volatile unsigned long *)&desc_head,*(unsigned long *)&old,*(unsigned long *)&new)){
 								
 				break;
 			}
@@ -233,7 +233,7 @@ static void DescRetire(descriptor* desc){
 		new.tag = old.tag +1;
 		
 
-	}while(!CompareAndSwapWrapper(*(volatile unsigned long *)&desc_head,*(unsigned long *)&old,*(unsigned long *)&new));
+	}while(!__sync_val_compare_and_swap(*(volatile unsigned long *)&desc_head,*(unsigned long *)&old,*(unsigned long *)&new));
 
 }
 
@@ -252,7 +252,7 @@ static void HeapPutPartial(descriptor* desc){
 	descriptor* prev;
 	do{
 		prev = (descriptor*)desc->heap->Partial;	
-	}while(!CompareAndSwapWrapper(&desc->heap->Partial,prev,desc));
+	}while(!__sync_val_compare_and_swap(&desc->heap->Partial,prev,desc));
 
 	if(prev)	
 		ListPutPartial(prev);		
@@ -264,7 +264,7 @@ static descriptor *HeapGetPartial(procheap *heap){
 		desc = *((descriptor **)&heap->Partial);
 		if(desc == NULL)
 			return ListGetPartial(heap->sc);	//head of linked list. If no partial SB
-	}while(!CompareAndSwapWrapper(&heap->Partial,desc,NULL));
+	}while(!__sync_val_compare_and_swap(&heap->Partial,desc,NULL));
 
 	return desc;
 
@@ -278,7 +278,7 @@ static void UpdateActive(procheap* heap, descriptor* desc, unsigned long morecre
 	newactive.ptr = (unsigned long)desc;	//pointer to desc in newanchor's ptr field
 	newactive.credits = morecredits-1;
 
-	if(CompareAndSwapWrapper((volatile unsigned long*)&heap->Active,(unsigned long)NULL,*(unsigned long *)&newactive))
+	if(__sync_val_compare_and_swap((volatile unsigned long*)&heap->Active,(unsigned long)NULL,*(unsigned long *)&newactive))
 		return ;	//return on success.
 		
 	//We are here=> couldnt install newactive as the active SB. There is another active SB in the heap. install this block as partial
@@ -286,7 +286,7 @@ static void UpdateActive(procheap* heap, descriptor* desc, unsigned long morecre
 		newanchor = oldanchor = desc->Anchor;
 		newanchor.count += morecredits;
 		newanchor.state = PARTIAL;
-	}while(!CompareAndSwapWrapper((volatile unsigned long*)&desc->Anchor,*((unsigned long *)&oldanchor),*(unsigned long *)&newanchor));
+	}while(!__sync_val_compare_and_swap((volatile unsigned long*)&desc->Anchor,*((unsigned long *)&oldanchor),*(unsigned long *)&newanchor));
 	
 	HeapPutPartial(desc);
 		
@@ -326,7 +326,7 @@ void* MallocFromActive(procheap *heap){
 			newactive.credits--;
 		}
 
-	}while(!CompareAndSwapWrapper((volatile unsigned long*)&heap->Active,*((unsigned long*)&oldactive,*((unsigned long*)&newactive));
+	}while(!__sync_val_compare_and_swap((volatile unsigned long*)&heap->Active,*((unsigned long*)&oldactive,*((unsigned long*)&newactive));
 	
 	 
 	//step 2: LF pop from list
@@ -351,7 +351,7 @@ void* MallocFromActive(procheap *heap){
 			}
 		}
 
-	}while(!CompareAndSwapWrapper((volatile unsigned long*)&desc->Anchor,*((unsigned long*)&oldanchor,*((unsigned long*)&newanchor));
+	}while(!__sync_val_compare_and_swap((volatile unsigned long*)&desc->Anchor,*((unsigned long*)&oldanchor,*((unsigned long*)&newanchor));
 	
 	if((oldactive.credits == 0) && (oldanchor.count > 0))	//get morecredits since number of blocs != 0
 		UpdateActive(heap,desc,morecredits);
@@ -390,7 +390,7 @@ retry:
 		newanchor.count -= morecredits+1;
 		newanchor.state = (morecredits > 0)?ACTIVE:FULL;
 	
-	}while(!CompareAndSwapWrapper((volatile unsigned long*)&desc->Anchor,
+	}while(!__sync_val_compare_and_swap((volatile unsigned long*)&desc->Anchor,
 					*((unsigned long *)&oldanchor),*(unsigned long *)&newanchor));	
 
 	do{	//pop reserved block
@@ -399,7 +399,7 @@ retry:
 		newanchor.avail = *(unsigned long *)addr;
 		newanchor.tag++;
 
-	}while(!CompareAndSwapWrapper((volatile unsigned long*)&desc->Anchor,
+	}while(!__sync_val_compare_and_swap((volatile unsigned long*)&desc->Anchor,
 					*((unsigned long *)&oldanchor),*(unsigned long *)&newanchor));	
 	if(morecredits > 0)
 		UpdateActive(heap,desc,morecredits);
@@ -434,7 +434,7 @@ static void *MallocFromNewSB(procheap *heap){
 	desc->Anchor.state = ACTIVE;
 	
 	//memory fence.Volatile!
-	if(!CompareAndSwapWrapper((volatile unsigned long long*)&heap->Active,NULL,*(unsigned long long*)&newactive)){
+	if(!__sync_val_compare_and_swap((volatile unsigned long long*)&heap->Active,NULL,*(unsigned long long*)&newactive)){
 		addr = desc->sb;
 		*(descriptor **)addr = desc;
 		*(descriptor **)addr |= 0x1;	//encode. this is a small block.
@@ -556,12 +556,12 @@ void free(void* ptr){
 		}
 		printf("Freed:small block");
 
-	}while(!CompareAndSwapWrapper((volatile unsigned long*)&desc->Anchor,
+	}while(!__sync_val_compare_and_swap((volatile unsigned long*)&desc->Anchor,
 					*((unsigned long *)&oldanchor),*(unsigned long *)&newanchor));	
 
 	if(newanchor.state == EMPTY){	//SB free to be returned to OS
 		munmap(sb,heap->sc->sbsize);
-		if (CompareAndSwapWrapper(&heap->Partial, desc, NULL)) {
+		if (__sync_val_compare_and_swap(&heap->Partial, desc, NULL)) {
 			DescRetire(desc);
 		}	
 	}
