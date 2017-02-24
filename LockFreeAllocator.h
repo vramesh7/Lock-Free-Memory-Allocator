@@ -1,35 +1,12 @@
-
+#include <stdlib.h>
+#include <stdio.h>
+#include <assert.h>
 #include <stdlib.h>
 
-#define GET_AVAIL(x)		((x>>38) & 0xFFFFF)
-#define PUT_AVAIL(x,avail)	(x += (avail & 0xFFFFF)<<38)
+#include "Stack.c"
 
-#define GET_COUNT(x)		((x>>14) & 0xFFFFF)
-#define PUT_COUNT(x,count)	(x += (count & 0xFFFFF)<<14)
 
-#define GET_STATE(x)		((x>>12) & 0x3)
-#define PUT_STATE(x,state)	 (x += (state & 0x3)<<12)	
 
-#define GET_TAG(x)		(0xFFF & x)  
-#define PUT_TAG(x,val)		(x += (0xFFF & val))
-
-#define GET_DESCTAG(x)		(x & 0x3FFFF)		
-#define PUT_DESCTAG(x,tag)	(x += 0x3FFFF & tag)
-
-#define GET_DESCAVAIL(x)			(((x>>18) & 0x3FFFFFFFFFFF)		
-#define PUT_DESCAVAIL(x,descavail)		((x += (descavail & 0x3FFFFFFFFFFF)<<18)
-#define MIN(a,b)				(((a)>(b))?(b):(a))	
-
-#define PGSIZE 		4096
-#define	MAXCREDITS	64
-#define ACTIVE 		0
-#define FULL 		1
-#define PARTIAL		2 
-#define EMPTY 		3
-
-#define DESCSBSIZE	(1024 * sizeof(descriptor))
-void *malloc(unsigned int);
-void free(void *);
 
 /*
 typedef struct {
@@ -63,6 +40,12 @@ typedef struct{
 }active;
 
 typedef struct{
+
+	ull DescAvail:48,tag:16;
+
+}desc_avail;
+
+typedef struct{
 	//each SB contains 
 	//LIst Partial
 	stack_t Partial;
@@ -89,5 +72,33 @@ typedef struct{
 }descriptor;
 
 
+#define GET_AVAIL(x)		((x>>38) & 0xFFFFF)
+#define PUT_AVAIL(x,avail)	(x += (avail & 0xFFFFF)<<38)
 
+#define GET_COUNT(x)		((x>>14) & 0xFFFFF)
+#define PUT_COUNT(x,count)	(x += (count & 0xFFFFF)<<14)
+
+#define GET_STATE(x)		((x>>12) & 0x3)
+#define PUT_STATE(x,state)	 (x += (state & 0x3)<<12)	
+
+#define GET_TAG(x)		(0xFFF & x)  
+#define PUT_TAG(x,val)		(x += (0xFFF & val))
+
+#define GET_DESCTAG(x)		(x & 0x3FFFF)		
+#define PUT_DESCTAG(x,tag)	(x += 0x3FFFF & tag)
+
+#define GET_DESCAVAIL(x)			(((x>>18) & 0x3FFFFFFFFFFF)		
+#define PUT_DESCAVAIL(x,descavail)		((x += (descavail & 0x3FFFFFFFFFFF)<<18)
+#define MIN(a,b)				(((a)>(b))?(b):(a))	
+
+#define PGSIZE 		4096
+#define	MAXCREDITS	64
+#define ACTIVE 		0
+#define FULL 		1
+#define PARTIAL		2 
+#define EMPTY 		3
+#define NDESC		1024
+#define DESCSBSIZE	(NDESC * sizeof(descriptor))
+extern void *malloc(unsigned int);
+extern void free(void *);
 

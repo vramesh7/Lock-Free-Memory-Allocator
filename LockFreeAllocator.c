@@ -1,22 +1,14 @@
-#include <stdlib.h>
-#include <stdio.h>
-#include <assert.h>
 
 #include "LockFreeAllocator.h"
-#include "Stack.c"
+
 #define EIGHTBYTES	sizeof(char *)
-pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-static void UpdateActive(procheap* heap, descriptor* desc, unsigned long morecredits);
-int CompareAndSwap(uintptr_t* add, int old_val, int new_val);
-int CompareAndSwapWrapper(uintptr_t* add, int old_val, int new_val);
-void* MallocFromActive(procheap *heap);
 
 
-static volatile descriptor* DescAvail;
+static volatile desc_alloc desc_head;
 
 //min request we can satisfy on malloc is 8 bytes and max = 2kB. 8 bytes overhead
 sizeclass sizeclasslist[2048 / EIGHTBYTES] = 	{
-				{{0,0}, 16, SBSIZE},
+				{{0,0}, 8, SBSIZE}, {{0,0}, 16, SBSIZE}
 				{{0,0}, 24, SBSIZE}, {{0,0}, 32, SBSIZE},
 				{{0,0}, 40, SBSIZE}, {{0,0}, 48, SBSIZE},
 				{{0,0}, 56, SBSIZE}, {{0,0}, 64, SBSIZE},
@@ -143,30 +135,12 @@ sizeclass sizeclasslist[2048 / EIGHTBYTES] = 	{
 				{{0,0}, 1992, SBSIZE}, {{0,0}, 2000, SBSIZE},
 				{{0,0}, 2008, SBSIZE}, {{0,0}, 2016, SBSIZE},
 				{{0,0}, 2024, SBSIZE}, {{0,0}, 2032, SBSIZE},
-				{{0,0}, 2040, SBSIZE}, {{0,0}, 2048, SBSIZE},
-				{{0,0}, 2056, SBSIZE}
+				{{0,0}, 2040, SBSIZE}, {{0,0}, 2048, SBSIZE}
 				};
 __thread procheap* heaps[2048 / EIGHTBYTES] = { };		//local to every thread
 
-//Test functions for CAS:LOCK BASED
-
-int CompareAndSwapWrapper(uintptr_t* add, int old_val, int new_val){
-	int value;
-	pthread_mutex_lock(&mutex);
-	value = CompareAndSwap(uintptr_t* add, int old_val, int new_val);
-	pthread_mutex_unlock(&mutex);
-	return value;
-}
 
 
-int CompareAndSwap(uintptr_t* add, int old_val, int new_val)
-{
-	int value = *add
-	if(value == old_val)
-		*add = new_val;
-	return value;
-
-}
 
 static void *AllocNewSB(unsigned int size){
 
@@ -189,7 +163,7 @@ static void *AllocNewSB(unsigned int size){
 static void MakeDescList(void* sb, unsigned long maxcount, unsigned long sz){
 
 	unsigned int i;
-	unsigned int currptr,nxtptr;
+	unsigned long currptr,nxtptr;
 	currptr = (unsigned long)sb;
 	for(i=0;i<maxcount-1;i++){
 		currptr += i*sz;
@@ -203,7 +177,7 @@ static void MakeDescList(void* sb, unsigned long maxcount, unsigned long sz){
 static void MakeList(void* sb, unsigned long maxcount, unsigned long sz){
 
 	unsigned int i;
-	unsigned int currptr;
+	unsigned long currptr;
 	currptr = (unsigned long)sb;
 	for(i=0;i<maxcount-1;i++){
 		currptr += i*sz;
@@ -212,28 +186,35 @@ static void MakeList(void* sb, unsigned long maxcount, unsigned long sz){
 	
 }
 
-//Note: ABA problem for desc?
-
+//Note: ABA problem for desc!
+//Pops desc from the head of the linked list
 static descriptor* DescAlloc(){
+	desc_avail old,new;
 	descriptor* desc,next;
 	while(1){
-		desc = DescAvail;
+		old = desc_head;		
 
-		if(desc){
-			next = desc->Next;
-			if(CompareAndSwapWrapper(*(volatile unsigned long *)&DescAvail,*(unsigned long *)&desc,*(unsigned long *)&next))
+		if(old.DescAvail != NULL){
+			new.DescAvail = (unsigned long)(((descriptor *)(old.DescAvail))->Next);
+			new.tag = old.tag + 1;		//update tag
+			//swing head of list to point to next desc. Allocates block on success
+			if(CompareAndSwapWrapper(*(volatile unsigned long *)&desc_head,*(unsigned long *)&old,*(unsigned long *)&new)){
+				desc = (descriptor *)old.DescAvail;				
 				break;
+			}
 		}
-
+		//No descriptor is available
 		else{
 
-			desc = AllocNewSB(DESCSBSIZE);
-			MakeDescList((void *)desc, DESCSBSIZE / sizeof(descriptor), sizeof(descriptor));
-
-			if(CompareAndSwapWrapper(*(volatile unsigned long *)&DescAvail,*(unsigned long *)&desc,*(unsigned long *)&next))
+			desc = AllocNewSB(DESCSBSIZE);		//allocates 1024 descriptors
+			MakeDescList((void *)desc, NDESC, sizeof(descriptor));
+			new.DescAvail = (unsigned long)(desc->Next);
+			new.tag = old.tag + 1;		//update tag
+			if(CompareAndSwapWrapper(*(volatile unsigned long *)&desc_head,*(unsigned long *)&old,*(unsigned long *)&new)){
+								
 				break;
-
-			munmap((void*)desc, DESCSBSIZE); 
+			}
+			munmap((void*)desc, DESCSBSIZE); 	//on CAS failure
 		}
 		
 	}
@@ -242,19 +223,23 @@ static descriptor* DescAlloc(){
 }
 
 static void DescRetire(descriptor* desc){
-	descriptor* oldhead;	
+	//descriptor* oldhead;	
+	desc_avail old,new;
 	//Insert desc at the head of the list
 	do{
-		oldhead = DescAvail;
-		desc->Next = oldhead;
+		old = desc_head;
+		desc->Next = (descriptor *)old.DescAvail;
+		new.DescAvail = (unsigned long)desc;
+		new.tag = old.tag +1;
+		
 
-	}while(!CompareAndSwapWrapper(*(volatile unsigned long *)&DescAvail,*(unsigned long *)&oldhead,*(unsigned long *)&desc));
+	}while(!CompareAndSwapWrapper(*(volatile unsigned long *)&desc_head,*(unsigned long *)&old,*(unsigned long *)&new));
 
 }
 
-
+//Linked list wrappers to push and pop from desc list
 static descriptor* ListGetPartial(sizeclass* sc){
-	return (descriptor *)Pop(sc->Partial);
+	return (descriptor *)Pop(&sc->Partial);
 }
 
 static void ListPutPartial(descriptor* desc){
@@ -276,7 +261,7 @@ static void HeapPutPartial(descriptor* desc){
 static descriptor *HeapGetPartial(procheap *heap){
 	descriptor* desc;
 	do{
-		desc = heap->Partial;
+		desc = *((descriptor **)&heap->Partial);
 		if(desc == NULL)
 			return ListGetPartial(heap->sc);	//head of linked list. If no partial SB
 	}while(!CompareAndSwapWrapper(&heap->Partial,desc,NULL));
@@ -366,7 +351,7 @@ void* MallocFromActive(procheap *heap){
 			}
 		}
 
-	}while(!CompareAndSwapWrapper((volatile unsigned long*)&heap->Active,*((unsigned long*)&oldactive,*((unsigned long*)&newactive));
+	}while(!CompareAndSwapWrapper((volatile unsigned long*)&desc->Anchor,*((unsigned long*)&oldanchor,*((unsigned long*)&newanchor));
 	
 	if((oldactive.credits == 0) && (oldanchor.count > 0))	//get morecredits since number of blocs != 0
 		UpdateActive(heap,desc,morecredits);
@@ -388,7 +373,7 @@ static void *MallocFromPartial(procheap *heap){
 	anchor oldanchor,newanchor;
 	void* addr;
 
-	retry:
+retry:
 	desc = HeapGetPartial(heap);
 	if(!desc) return NULL;
 	desc->heap = heap;
@@ -449,7 +434,7 @@ static void *MallocFromNewSB(procheap *heap){
 	desc->Anchor.state = ACTIVE;
 	
 	//memory fence.Volatile!
-	if(!CompareAndSwapWrapper((volatile unsigned long*)&heap->Active,NULL,*(unsigned long *)&newactive)){
+	if(!CompareAndSwapWrapper((volatile unsigned long long*)&heap->Active,NULL,*(unsigned long long*)&newactive)){
 		addr = desc->sb;
 		*(descriptor **)addr = desc;
 		*(descriptor **)addr |= 0x1;	//encode. this is a small block.
@@ -474,7 +459,7 @@ void* MallocLargeBlock(unsigned int sz){
 	}
 	*(unsigned long *)addr = sz + EIGHTBYTES;		//Insert size in the header
 	*(unsigned long *)addr |= 0x0;		//encode. this is a large block.
-	return (void *)((unsigned long)addr + EIGHTBYTES);
+	return (void *)((unsigned long long)addr + EIGHTBYTES);
 	
 }
 
@@ -484,14 +469,14 @@ static procheap* find_heap(unsigned int sz){
 	procheap* heap;
   
 	sz += EIGHTBYTES;
-	if (sz > 2056) {
+	if (sz > 2048) {
 		return NULL;
 	}
 
-	heap = heaps[(sz/EIGHTBYTES)-1];
+	heap = heaps[(sz/EIGHTBYTES)];
 
 	if(heap == NULL){		//First time access to heap
-		if((heap = mmap(NULL,sz + EIGHTBYTES,PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0)) ==MAP_FAILED) 		{		
+		if((heap = mmap(NULL,sizeof(procheap),PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0)) ==MAP_FAILED)  {		
 			//null => kernel chooses address for new mapping 
 			printf("Memory error:heap Fail: %e",errno);
 			exit(1);
@@ -499,8 +484,8 @@ static procheap* find_heap(unsigned int sz){
 
 		*((ull*)&(heap->Active)) = 0;
 		heap->Partial = NULL;
-		heap->sc = &sizeclasses[(sz /EIGHTBYES)-1];
-		heaps[(sz / EIGHTBYTES)-1] = heap;
+		heap->sc = &sizeclasses[(sz /EIGHTBYES)];
+		heaps[(sz / EIGHTBYTES)] = heap;
 
 	}
 
@@ -543,12 +528,14 @@ void free(void* ptr){
 	anchor newanchor,oldanchor;
 	if(!ptr) return;	//if NULL
 
-	ptr = (void*)((unsigned long)ptr - HEADER_SIZE);;		//get prefix
-	desc =  BLOCKDESC(*(descriptor **)ptr);	// descriptor of the block
-
+	ptr = (void*)((unsigned long)ptr - EIGHTBYTES);;		//get prefix
 	if(BLOCKSTAT(*(unsigned long*)ptr) == 0){		//large block -desc holds sz+1
 		munmap(ptr, BLOCKDESC(*((unsigned long *)(ptr))));
+		printf("Freed:large block");
 	}
+	desc =  BLOCKDESC(*(descriptor **)ptr);	// descriptor of the block
+
+	
 	//small block
 	void* sb = desc->sb;
 	do{
@@ -567,6 +554,7 @@ void free(void* ptr){
 		else{
 			newanchor.count++;
 		}
+		printf("Freed:small block");
 
 	}while(!CompareAndSwapWrapper((volatile unsigned long*)&desc->Anchor,
 					*((unsigned long *)&oldanchor),*(unsigned long *)&newanchor));	
