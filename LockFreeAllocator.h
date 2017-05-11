@@ -1,77 +1,70 @@
 #include <stdlib.h>
+#include <signal.h>
+#include <sys/mman.h>
 #include <stdio.h>
 #include <assert.h>
-#include <stdlib.h>
+#include <errno.h>
+#include <string.h>
 
-#include "Stack.c"
+//#include "atomic.h"
+#include "queue.h"
 
+struct Descriptor;
+typedef struct Descriptor descriptor;
+struct Procheap;
+typedef struct Procheap procheap;
 
+#define TYPE_SIZE	sizeof(void*)
+#define PTR_SIZE	sizeof(void*)
+#define HEADER_SIZE	(TYPE_SIZE + PTR_SIZE)
 
+#define LARGE		0
+#define SMALL		1
+
+#define	PAGESIZE	4096
+#define SBSIZE		(16 * PAGESIZE)
+#define DESCSBSIZE	(1024 * sizeof(descriptor))
+
+#define ACTIVE		0
+#define FULL		1
+#define PARTIAL		2
+#define EMPTY		3
+
+#define	MAXCREDITS	64 // 2^(bits for credits in active)
+#define GRANULARITY	8
+#define DEBUGx	1
+
+typedef struct {
+	unsigned long long 	avail:24,count:24, state:2, tag:14;
+} anchor;
+
+struct Descriptor {
+	struct queue_elem_t	lf_fifo_queue_padding;
+	volatile anchor		Anchor;
+	descriptor*		Next;
+	void*			sb;		// pointer to superblock
+	procheap*		heap;		// pointer to owner procheap
+	unsigned int		sz;		// block size
+	unsigned int		maxcount;	// superblock size / sz
+};
+
+typedef struct {
+	lf_fifo_queue_t		Partial;	// initially empty
+	unsigned int		sz;		// block size
+	unsigned int		sbsize;		// superblock size
+} sizeclass;
+
+typedef struct {
+	unsigned long long	ptr:58, credits:6;
+} active;
+
+struct Procheap {
+	volatile active		Active;		// initially NULL
+	volatile descriptor*	Partial;	// initially NULL
+	sizeclass*		sc;		// pointer to parent sizeclass
+};
 
 /*
-typedef struct {
-unsigned long long anchorfield;		//avail:24, count:24, state:2, tag:12
-}anchor;
-
-
-typedef struct{
-
-unsigned long long DescAvail;		//DescAvail:46 and tag:18	
-}DescAvail;
-*/
-
-#define BLOCKSTAT(x)	x & 0x1
-#define BLOCKDESC(x)	x & ~0x1
-
-typedef unsigned long long ull;
-//64 bit machine.
-/*superblock descriptor*/
-typedef struct{
-	ull avail:24,count:24,state:2,tag:14;
-
-}anchor;
-
-
-/* active Heap descriptor */
-typedef struct{
-
-	ull ptr:58,credits:6;
-
-}active;
-
-typedef struct{
-
-	ull DescAvail:48,tag:16;
-
-}desc_avail;
-
-typedef struct{
-	//each SB contains 
-	//LIst Partial
-	stack_t Partial;
-	unsigned int sz;		//blocksize
-	unsigned int sbsize;		//superblock size  => no of blocks sbszie/sz
-}sizeclass;
-
-typedef struct{
-	
-	active Active;			//Initially Null 
-	descriptor* Partial;		//Initially Null 
-	sizeclass* sc;			//pointer to parent superblock
-}procheap;
-
-
-typedef struct{
-	anchor Anchor;
-	descriptor* Next;
-	void* sb;			//pointer to superblock
-	procheap* heap;			//pointer to owner heap
-	unsigned int sz;		//block size
-	unsigned int maxcount;		//superblock size/sz	
-
-}descriptor;
-
-
 #define GET_AVAIL(x)		((x>>38) & 0xFFFFF)
 #define PUT_AVAIL(x,avail)	(x += (avail & 0xFFFFF)<<38)
 
@@ -90,15 +83,8 @@ typedef struct{
 #define GET_DESCAVAIL(x)			(((x>>18) & 0x3FFFFFFFFFFF)		
 #define PUT_DESCAVAIL(x,descavail)		((x += (descavail & 0x3FFFFFFFFFFF)<<18)
 #define MIN(a,b)				(((a)>(b))?(b):(a))	
+*/
+extern void* malloc(size_t sz);
+extern void free(void* ptr);
 
-#define PGSIZE 		4096
-#define	MAXCREDITS	64
-#define ACTIVE 		0
-#define FULL 		1
-#define PARTIAL		2 
-#define EMPTY 		3
-#define NDESC		1024
-#define DESCSBSIZE	(NDESC * sizeof(descriptor))
-extern void *malloc(unsigned int);
-extern void free(void *);
 
