@@ -3,7 +3,7 @@ ASM		= x86
 	BITS = -m64
 	FPIC = -fPIC
 
-
+#shared object make
 CC		= gcc
 CXX		= g++
 
